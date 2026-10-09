@@ -36,3 +36,41 @@ def query_hf_api(payload:dict):
         return r.json(),None
     except Exception:
         return None,"Non-JSON response recieved from the API."
+def _extract_text(data)->str:
+    msg=(data or{}).get("choices",[{}])[0].get("message",{})or{}
+    return(msg.get("content")or"").strip()
+def _run_models(models,messages,max_tokens=160,temperature=0.3):
+    last_err=None
+    for model in models:
+        data,err=query_hf_api({"model":model,"messages":messages,"max_tokens":max_tokens,"temperature":temperature})      
+        if err:
+            last_err=err
+            continue
+        out=_extract_text(data)
+        if out:
+            return out,None
+        last_err="Empty response from model."
+    return None,last_err or "ALL models failed."
+def _words(text:str):
+    return re.findall(r"\S+",(text or"").strip())
+def _exact_n_words(text:str,n:int)->str:
+    return " ".join(_words(text)[:n])
+def _ensure_sentence_end(text:str)->str:
+    t=(text or "").strip()
+    if t and t[-1]not in ".!?":
+        t +="."
+    return t
+def generate_text(prompt:str,max_new_tokens:int=220)->str:
+    txt,err=_run_models(TEXT_MODELS,[{"role":"user","content":prompt}], max_tokens=max_new_tokens,temperature=0.4)
+    if not txt:
+        raise Exception(err)
+    return txt
+def generate_exact_sentence(prompt:str,n_words:int,max_new_tokens:int,tries:int=6)->str:
+    last=""
+    for _ in range(tries):
+        last=generate_text(prompt,max_new_tokens=max_new_tokens)
+        if len(_words(last))>=n_words:
+            return _ensure_sentence_end(_exact_n_words(last, n_words))
+        prompt +=f"\n\nTry again.Ensure at least{n_words} words and end with a period."
+        time.sleep(0.2)
+        return _ensure_sentence_end(_exact_n_words(last,min(n_words,len(_words(last)))))
